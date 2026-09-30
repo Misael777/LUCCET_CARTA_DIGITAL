@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pide LUCET · Flujo de pedidos en paralelo</title>
+<style>
+  :root {
+    --bg: #0b0b0f;
+    --card: #16161d;
+    --pink: #ff2d6a;
+    --blue: #3b82f6;
+    --amber: #f59e0b;
+    --green: #22c55e;
+    --purple: #a855f7;
+    --white: #ffffff;
+    --muted: #9ca3af;
+    --light: #e5e7eb;
+    --line: #2a2a35;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--light);
+    min-height: 100vh;
+  }
+  header {
+    padding: 18px 28px 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .brand { font-size: 11px; letter-spacing: 2px; color: var(--pink); font-weight: 700; }
+  h1 { font-size: 22px; font-weight: 800; color: var(--white); margin-top: 4px; }
+  .subtitle { color: var(--muted); font-size: 12px; margin-top: 5px; max-width: 560px; line-height: 1.4; }
+  .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button {
+    border: none; cursor: pointer; border-radius: 10px;
+    padding: 10px 14px; font-weight: 700; font-size: 12px;
+  }
+  .btn-primary { background: var(--pink); color: white; }
+  .btn-secondary { background: var(--card); color: var(--light); border: 1px solid var(--line); }
+  .status { font-size: 12px; color: var(--muted); max-width: 300px; }
+  .status strong { color: var(--pink); }
+
+  .stage {
+    position: relative;
+    margin: 10px 20px 16px;
+    height: 560px;
+    background: radial-gradient(ellipse at center, #12121a 0%, var(--bg) 70%);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    overflow: hidden;
+  }
+
+  .node {
+    position: absolute;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 10px 10px;
+    transition: 0.35s ease;
+    z-index: 5;
+  }
+  .node.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent), 0 0 22px color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  .node .bar { height: 3px; border-radius: 3px; background: var(--accent); margin-bottom: 8px; }
+  .node h3 { font-size: 12px; color: var(--white); margin-bottom: 3px; }
+  .node p { font-size: 10px; color: var(--muted); line-height: 1.3; }
+  .node .count {
+    margin-top: 6px;
+    font-size: 16px;
+    font-weight: 800;
+    color: var(--white);
+  }
+  .node .count small { font-size: 9px; color: var(--muted); font-weight: 500; }
+
+  /* Individual user nodes - left column */
+  .user-node {
+    width: 120px;
+    --accent: var(--pink);
+  }
+  .user-node .avatar {
+    font-size: 22px;
+    margin-bottom: 4px;
+  }
+  .user-node.ordering {
+    border-color: var(--pink);
+    box-shadow: 0 0 16px color-mix(in srgb, var(--pink) 40%, transparent);
+  }
+  .user-node.paid {
+    border-color: color-mix(in srgb, var(--green) 60%, var(--line));
+  }
+
+  #u1 { left: 24px; top: 28px; }
+  #u2 { left: 24px; top: 130px; }
+  #u3 { left: 24px; top: 232px; }
+  #u4 { left: 24px; top: 334px; }
+  #u5 { left: 24px; top: 436px; }
+
+  #nodeSupabase { left: 50%; top: 36px; transform: translateX(-50%); --accent: var(--blue); width: 170px; }
+  #nodePay { left: 50%; top: 210px; transform: translateX(-50%); --accent: var(--amber); width: 150px; }
+  #nodeBridge { left: 42%; bottom: 36px; transform: translateX(-50%); --accent: var(--green); width: 180px; }
+  #nodeInforest { right: 28px; bottom: 36px; --accent: var(--purple); width: 160px; }
+
+  .queue {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+    min-height: 24px;
+  }
+  .qdot {
+    width: 22px; height: 22px;
+    border-radius: 6px;
+    background: var(--blue);
+    color: white;
+    font-size: 9px;
+    font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0;
+    transform: scale(0.4);
+    transition: 0.35s ease;
+  }
+  .qdot.show { opacity: 1; transform: scale(1); }
+
+  .paths {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+    pointer-events: none;
+  }
+  .paths path {
+    fill: none;
+    stroke: #2a2a35;
+    stroke-width: 1.5;
+    stroke-dasharray: 5 5;
+  }
+  .paths path.lit {
+    stroke: var(--pink);
+    stroke-dasharray: none;
+    filter: drop-shadow(0 0 5px color-mix(in srgb, var(--pink) 55%, transparent));
+  }
+  .paths path.lit-green {
+    stroke: var(--green);
+    stroke-dasharray: none;
+    filter: drop-shadow(0 0 5px color-mix(in srgb, var(--green) 55%, transparent));
+  }
+  .paths path.lit-blue {
+    stroke: var(--blue);
+    stroke-dasharray: none;
+    filter: drop-shadow(0 0 5px color-mix(in srgb, var(--blue) 45%, transparent));
+  }
+
+  .packet {
+    position: absolute;
+    z-index: 20;
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    background: var(--pink);
+    color: white;
+    font-size: 10px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 14px color-mix(in srgb, var(--pink) 55%, transparent);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .packet.show { opacity: 1; }
+  .packet.batch {
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
+    background: var(--green);
+    box-shadow: 0 0 20px color-mix(in srgb, var(--green) 55%, transparent);
+    font-size: 14px;
+  }
+
+  .legend-bar {
+    position: absolute;
+    left: 50%;
+    top: 12px;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 12px;
+    font-size: 10px;
+    color: var(--muted);
+    background: rgba(22,22,29,0.92);
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    z-index: 10;
+    white-space: nowrap;
+  }
+  .legend-bar i {
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    margin-right: 3px;
+  }
+
+  footer {
+    padding: 0 28px 20px;
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.45;
+  }
+  footer strong { color: var(--light); }
+</style>
+</head>
+<body>
+  <header>
+    <div>
+      <div class="brand">PIDE LUCET · PEDIDOS EN PARALELO</div>
+      <h1>Cada usuario es un nodo · los pedidos vuelan a la vez</h1>
+      <p class="subtitle">
+        5 apps independientes envían pedidos en paralelo hacia Supabase.
+        Luego el bridge junta todo el lote y lo migra a Inforest.
+      </p>
+    </div>
+    <div class="controls">
+      <div class="status">Estado: <strong id="statusText">En espera</strong></div>
+      <button class="btn-secondary" id="btnReset">Reiniciar</button>
+      <button class="btn-primary" id="btnPlay">▶ Simular hora pico</button>
+    </div>
+  </header>
+
+  <div class="stage" id="stage">
+    <svg class="paths" id="svgPaths"></svg>
+
+    <div class="legend-bar">
+      <span><i style="background:var(--pink)"></i>Pedido individual</span>
+      <span><i style="background:var(--green)"></i>Lote masivo</span>
+      <span><i style="background:var(--blue)"></i>Cola Supabase</span>
+      <span><i style="background:var(--purple)"></i>Inforest</span>
+    </div>
+
+    <!-- 5 user nodes -->
+    <div class="node user-node" id="u1" data-user="1">
+      <div class="bar"></div>
+      <div class="avatar">👩‍🎓</div>
+      <h3>Ana</h3>
+      <p>Menú ejecutivo</p>
+    </div>
+    <div class="node user-node" id="u2" data-user="2">
+      <div class="bar"></div>
+      <div class="avatar">👨‍🎓</div>
+      <h3>Luis</h3>
+      <p>Sanguche + jugo</p>
+    </div>
+    <div class="node user-node" id="u3" data-user="3">
+      <div class="bar"></div>
+      <div class="avatar">👩‍💻</div>
+      <h3>María</h3>
+      <p>Ceviche</p>
+    </div>
+    <div class="node user-node" id="u4" data-user="4">
+      <div class="bar"></div>
+      <div class="avatar">🧑‍🔧</div>
+      <h3>Pedro</h3>
+      <p>Combo del día</p>
+    </div>
+    <div class="node user-node" id="u5" data-user="5">
+      <div class="bar"></div>
+      <div class="avatar">👩‍🏫</div>
+      <h3>Sofía</h3>
+      <p>Ensalada + té</p>
+    </div>
+
+    <div class="node" id="nodeSupabase">
+      <div class="bar"></div>
+      <h3>Supabase</h3>
+      <p>Centraliza órdenes pagadas sin sync</p>
+      <div class="queue" id="queue"></div>
+      <div class="count"><span id="cntQueue">0</span> <small>en cola</small></div>
+    </div>
+
+    <div class="node" id="nodePay">
+      <div class="bar"></div>
+      <h3>Pasarela</h3>
+      <p>Culqi / Niubiz (webhook)</p>
+      <div class="count"><span id="cntPay">0</span> <small>pagos OK</small></div>
+    </div>
+
+    <div class="node" id="nodeBridge">
+      <div class="bar"></div>
+      <h3>Bridge local</h3>
+      <p>1 proceso · lote cada 60s</p>
+      <div class="count"><span id="cntBatch">0</span> <small>en el lote</small></div>
+    </div>
+
+    <div class="node" id="nodeInforest">
+      <div class="bar"></div>
+      <h3>Inforest</h3>
+      <p>POS · cocina / caja</p>
+      <div class="count"><span id="cntInf">0</span> <small>en cocina</small></div>
+    </div>
+  </div>
+
+  <footer>
+    <strong>Paralelo:</strong> varios usuarios piden a la vez → cada pedido viaja por su cuenta a Supabase.
+    <strong>Serie controlada:</strong> un solo bridge junta el lote y lo escribe en Inforest sin saturar el POS.
+  </footer>
+
+<script>
+const stage = document.getElementById("stage");
+const statusText = document.getElementById("statusText");
+const btnPlay = document.getElementById("btnPlay");
+const btnReset = document.getElementById("btnReset");
+let timers = [];
+let playing = false;
+let payCount = 0;
+
+// Slower timings (ms)
+const T = {
+  toSupabase: 1400,
+  toPay: 1100,
+  backSupabase: 1100,
+  stagger: 450,      // delay between starting each user's order (still overlaps)
+  pausePay: 500,
+  batchToBridge: 1800,
+  batchToInf: 2000,
+  betweenPhase: 900
+};
+
+function $(id) { return document.getElementById(id); }
+function clearTimers() { timers.forEach(t => clearTimeout(t)); timers = []; }
+function sleep(ms) {
+  return new Promise(r => { const t = setTimeout(r, ms); timers.push(t); });
+}
+
+function centerOf(el) {
+  const sr = stage.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  return {
+    x: r.left - sr.left + r.width / 2,
+    y: r.top - sr.top + r.height / 2
+  };
+}
+
+function drawPaths() {
+  const svg = $("svgPaths");
+  const s = centerOf($("nodeSupabase"));
+  const p = centerOf($("nodePay"));
+  const b = centerOf($("nodeBridge"));
+  const i = centerOf($("nodeInforest"));
+
+  let paths = "";
+  // User → Supabase (5 paths)
+  for (let n = 1; n <= 5; n++) {
+    const u = centerOf($("u" + n));
+    paths += `<path id="pathU${n}S" d="M ${u.x} ${u.y} C ${(u.x+s.x)/2} ${u.y}, ${(u.x+s.x)/2} ${s.y}, ${s.x} ${s.y}" />`;
+  }
+  // Supabase ↔ Pay
+  paths += `<path id="pathSP" d="M ${s.x} ${s.y} C ${s.x} ${(s.y+p.y)/2}, ${p.x} ${(s.y+p.y)/2}, ${p.x} ${p.y}" />`;
+  paths += `<path id="pathPS" d="M ${p.x} ${p.y} C ${p.x} ${(p.y+s.y)/2}, ${s.x} ${(p.y+s.y)/2}, ${s.x} ${s.y}" />`;
+  // Supabase → Bridge → Inforest
+  paths += `<path id="pathSB" d="M ${s.x} ${s.y} C ${s.x} ${(s.y+b.y)/2}, ${b.x} ${(s.y+b.y)/2}, ${b.x} ${b.y}" />`;
+  paths += `<path id="pathBI" d="M ${b.x} ${b.y} C ${(b.x+i.x)/2} ${b.y}, ${(b.x+i.x)/2} ${i.y}, ${i.x} ${i.y}" />`;
+
+  svg.innerHTML = paths;
+}
+
+function litPath(id, cls = "lit") {
+  const p = document.getElementById(id);
+  if (p) p.classList.add(cls);
+}
+function unlitPath(id) {
+  const p = document.getElementById(id);
+  if (p) p.classList.remove("lit", "lit-green", "lit-blue");
+}
+
+function setStatus(t) { statusText.textContent = t; }
+
+function createPacket(label, batch = false) {
+  const d = document.createElement("div");
+  d.className = "packet" + (batch ? " batch" : "");
+  d.textContent = label;
+  stage.appendChild(d);
+  return d;
+}
+
+function animateAlong(packet, pathId, duration) {
+  return new Promise(resolve => {
+    const path = document.getElementById(pathId);
+    if (!path) { resolve(); return; }
+    const len = path.getTotalLength();
+    packet.classList.add("show");
+    const start = performance.now();
+    function frame(now) {
+      const t = Math.min(1, (now - start) / duration);
+      // ease in-out
+      const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+      const pt = path.getPointAtLength(ease * len);
+      packet.style.left = (pt.x - packet.offsetWidth / 2) + "px";
+      packet.style.top = (pt.y - packet.offsetHeight / 2) + "px";
+      if (t < 1) requestAnimationFrame(frame);
+      else resolve();
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+function addQueueDot(id) {
+  const dot = document.createElement("div");
+  dot.className = "qdot";
+  dot.textContent = "#" + id;
+  $("queue").appendChild(dot);
+  requestAnimationFrame(() => dot.classList.add("show"));
+  $("cntQueue").textContent = String($("queue").children.length);
+}
+
+function resetUI() {
+  clearTimers();
+  playing = false;
+  payCount = 0;
+  btnPlay.disabled = false;
+  btnPlay.textContent = "▶ Simular hora pico";
+  setStatus("En espera");
+  document.querySelectorAll(".packet").forEach(p => p.remove());
+  document.querySelectorAll(".node").forEach(n => {
+    n.classList.remove("active", "ordering", "paid");
+  });
+  document.querySelectorAll(".paths path").forEach(p => p.classList.remove("lit", "lit-green", "lit-blue"));
+  $("queue").innerHTML = "";
+  $("cntQueue").textContent = "0";
+  $("cntPay").textContent = "0";
+  $("cntBatch").textContent = "0";
+  $("cntInf").textContent = "0";
+  drawPaths();
+}
+
+/** One user's full journey: App → Supabase → Pay → Supabase (queued) */
+async function runUserOrder(userId) {
+  const node = $("u" + userId);
+  node.classList.add("ordering");
+  setStatus(`Usuario ${userId}: enviando pedido desde su app…`);
+
+  const pkt = createPacket("#" + userId);
+  const start = centerOf(node);
+  pkt.style.left = (start.x - 16) + "px";
+  pkt.style.top = (start.y - 16) + "px";
+  pkt.classList.add("show");
+
+  // App → Supabase
+  litPath("pathU" + userId + "S");
+  $("nodeSupabase").classList.add("active");
+  await animateAlong(pkt, "pathU" + userId + "S", T.toSupabase);
+  unlitPath("pathU" + userId + "S");
+
+  // Supabase → Pay
+  litPath("pathSP");
+  $("nodePay").classList.add("active");
+  setStatus(`Pedido #${userId}: procesando pago…`);
+  await animateAlong(pkt, "pathSP", T.toPay);
+  unlitPath("pathSP");
+  await sleep(T.pausePay);
+
+  payCount += 1;
+  $("cntPay").textContent = String(payCount);
+
+  // Pay → Supabase (paid)
+  litPath("pathPS", "lit-blue");
+  setStatus(`Pedido #${userId}: pagado · entra a la cola de sync`);
+  await animateAlong(pkt, "pathPS", T.backSupabase);
+  unlitPath("pathPS");
+
+  addQueueDot(userId);
+  node.classList.remove("ordering");
+  node.classList.add("paid");
+  pkt.remove();
+}
+
+async function play() {
+  if (playing) return;
+  resetUI();
+  playing = true;
+  btnPlay.disabled = true;
+  btnPlay.textContent = "Simulando…";
+  drawPaths();
+
+  setStatus("Hora pico: varios usuarios piden en paralelo");
+
+  // Launch orders with stagger so they OVERLAP (parallel), not one-after-another
+  const jobs = [];
+  for (let i = 1; i <= 5; i++) {
+    jobs.push((async () => {
+      await sleep((i - 1) * T.stagger);
+      await runUserOrder(i);
+    })());
+  }
+  await Promise.all(jobs);
+
+  // All in queue — bridge sweep
+  await sleep(T.betweenPhase);
+  document.querySelectorAll(".node").forEach(n => n.classList.remove("active"));
+  $("nodeBridge").classList.add("active");
+  $("nodeSupabase").classList.add("active");
+  setStatus("Bridge: toma foto de las 5 órdenes pagadas sin sincronizar");
+
+  const batch = createPacket("×5", true);
+  const s = centerOf($("nodeSupabase"));
+  batch.style.left = (s.x - 26) + "px";
+  batch.style.top = (s.y - 26) + "px";
+  batch.classList.add("show");
+  $("cntBatch").textContent = "5";
+  $("queue").innerHTML = "";
+  $("cntQueue").textContent = "0";
+
+  litPath("pathSB", "lit-green");
+  await animateAlong(batch, "pathSB", T.batchToBridge);
+  unlitPath("pathSB");
+
+  setStatus("Bridge prepara INSERT idempotente del lote completo");
+  await sleep(600);
+
+  litPath("pathBI", "lit-green");
+  $("nodeInforest").classList.add("active");
+  $("nodeBridge").classList.remove("active");
+  setStatus("Migración masiva: las 5 órdenes viajan juntas a Inforest");
+  await animateAlong(batch, "pathBI", T.batchToInf);
+  unlitPath("pathBI");
+
+  $("cntInf").textContent = "5";
+  $("cntBatch").textContent = "0";
+  batch.remove();
+  setStatus("Listo · 5 pedidos en Inforest · próximo ciclo del bridge en 60s");
+
+  playing = false;
+  btnPlay.disabled = false;
+  btnPlay.textContent = "▶ Simular de nuevo";
+}
+
+btnPlay.addEventListener("click", play);
+btnReset.addEventListener("click", resetUI);
+window.addEventListener("resize", drawPaths);
+drawPaths();
+</script>
+</body>
+</html>
